@@ -1,0 +1,201 @@
+---
+title: "su + tx maintenance"
+output: html_document
+date: "2023-12-11"
+---
+
+echo "# SU-Maintenance-of-Tx-Gains" >> README.md
+  git init
+  git add README.md
+  git commit -m "first commit"
+  git branch -M main
+  git remote add origin https://github.com/ptakmi/SU-Maintenance-of-Tx-Gains.git
+  git push -u origin main
+
+##### PACKAGES
+library(dplyr)
+library(haven)
+library(readxl)
+library(ggcorrplot)
+library(knitr)
+library(ggplot2)
+library(boot)
+library(tidyr)
+library(table1)
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+library(janitor) # this cleans variable names in datasets
+library(effsize)
+library(stats)
+
+#### READ and CLEAN
+#sutx_data <- read_csv("~/Downloads/2 Week Everything Data Reduced.csv")
+sutx_data <- read_csv("~/Downloads/2 Week Everything Data Reduced.csv")
+
+View(sutx_data)
+set.seed(123)
+sutx_data <- clean_names(sutx_data, "snake")
+sutx_data <- sutx_data %>% drop_na(auditc1_new_baseline)
+sutx_data <- sutx_data %>% drop_na(pcl5_score_day1)
+sutx_data <- sutx_data %>% drop_na(pcl5_score_post)
+sutx_data <- sutx_data %>% drop_na(daysabst2_new_baseline)
+
+### FACTORS
+sutx_data$cohort_type_baseline <- factor(sutx_data$cohort_type_baseline, labels = c("Combat", "MST"))
+
+### DEMOGRAPHIC TABLE
+demo_table <- 
+table1(~ sex + ethnicity + first_race + age + sexual_orientation +                        marital_status + education_level + cohort_type_baseline + post + discharge_status + last_or_current_branch, data= sutx_data)
+writeLines(demo_table, "demo_table.html")
+
+#### Exploring Distribution of PCL, PHQ, AUDIT-C
+# PLC Baseline: pcl5_score_pastmonth_baseline
+# PCL Follow Ups: pcl5_score_pastmonth_1/3/6/12mon
+
+# PHQ Baseline: phq9_score_baseline
+# PHQ Follow Ups: phq9_score_1/3/9/12mon
+
+# AUDIT-C Baseline: 
+  geom_histogram(binwidth = 5, fill = "blue", color = "black", alpha = 0.7) +
+  labs(title = "Histogram of pcl5_score_pastmonth_baseline",
+       x = "pcl5_score_pastmonth_baseline",
+       y = "Frequency")
+
+# Add title
+title(main = "Depression Scores Over Time")
+
+#Line Graphs of PCL, PHQ, and AUDITC
+pcl_data <- data.frame(
+  Timepoint = c("Baseline", "Day 5", "Last Day", "Month 1", "Month 3", "Month 6", "Year 1"),
+  Mean_Score = c(mean(sutx_data$pcl5_score_pastmonth_baseline,na.rm=T),
+                 mean(sutx_data$pcl5_score_day5, na.rm=T),
+                 mean(sutx_data$pcl5_score_post, na.rm=T),
+                 mean(sutx_data$pcl5_score_pastmonth_1mon, na.rm=T),
+                 mean(sutx_data$pcl5_score_pastmonth_3mon, na.rm=T),
+                 mean(sutx_data$pcl5_score_pastmonth_6mon, na.rm=T),
+                 mean(sutx_data$pcl5_score_pastmonth_12mon, na.rm=T)))
+
+ggplot(data = pcl_data, aes(x = Timepoint, y = Mean_Score)) +
+  geom_path(group=1) + 
+  geom_point(size = 6, color = "red") + 
+  labs(title = "Mean PCL Score Over Time",
+       x = "Timepoints",
+       y = "PCL Score") + 
+  ylim(0, 80) + 
+  theme_minimal() # Optional - choose a theme for the plot, aes(x = pcl5_score_pastmonth_baseline)) +
+  
+#phq data
+phq_data <- data.frame(
+  Timepoint = c("Baseline", "Day 5", "Last Day", "Month 1", "Month 3", "Month 6", "Year 1"),
+  Mean_Score = c(mean(sutx_data$phq9_score_baseline,na.rm=T),
+                 mean(sutx_data$phq9_score_day5, na.rm=T),
+                 mean(sutx_data$phq9_score_post, na.rm=T),
+                 mean(sutx_data$phq9_score_1mon, na.rm=T),
+                 mean(sutx_data$phq9_score_3mon, na.rm=T),
+                 mean(sutx_data$phq9_score_6mon, na.rm=T),
+                 mean(sutx_data$phq9_score_12mon, na.rm=T)))
+
+ggplot(data = phq_data, aes(x = Timepoint, y = Mean_Score)) +
+  geom_path(group=1) + 
+  geom_point(size = 6, color = "blue") + 
+  labs(title = "Mean PHQ Score Over Time",
+       x = "Timepoints",
+       y = "PHQ Score") + 
+  ylim(0, 30) + 
+  theme_minimal() # Optional - choose a theme for the plot, aes(x = phq9_score_baseline)) +
+  
+###CALCULATING CHANGE SCORE FOR PCL
+  attach(sutx_data)
+  pclchangescoreforaudit <- pcl5_score_day1 - pcl5_score_post
+  
+##CREATING YES/NO ALCOHOL USE VARIABLE
+sutx_data <- sutx_data %>%
+  filter(!is.na(auditc1_new_baseline))
+sutx_data$auditc1_new_baseline[sutx_data$auditc1_new_baseline %in% c("0")          ] <- 0
+sutx_data$auditc1_new_baseline[sutx_data$auditc1_new_baseline %in% c("1", "2", "3", "4")] <- 1
+
+sutx_data$auditc1_new_baseline <- factor(sutx_data$auditc1_new_baseline,
+                       levels = 0:1,
+                       labels = c("No Alcohol Use",
+                                  "Alcohol Use"))
+table(sutx_data$auditc1_new_baseline, sutx_data$auditc1_new_baseline)
+                                  
+#LINEAR MODEL
+  linearmodel_alcoholuse <- lm(pclchangescoreforaudit ~ auditc1_new_baseline + sex + age + ethnicity + cohort_type_baseline + first_race + phq9_score_day1, data=sutx_data)
+summary(linearmodel_alcoholuse)
+
+##CREATING YES/NO MARIJUANA USE VARIABLE
+sutx_data <- sutx_data %>%
+  filter(!is.na(daysabst2_new_baseline))
+sutx_data$daysabst2_new_baseline[sutx_data$daysabst2_new_baseline %in% c("0")          ] <- 0
+sutx_data$daysabst2_new_baseline[sutx_data$daysabst2_new_baseline %in% c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14")] <- 1
+
+sutx_data$daysabst2_new_baseline <- factor(sutx_data$daysabst2_new_baseline,
+                       levels = 0:1,
+                       labels = c("No Marijuana Use",
+                                  "Marijuana Use"))
+table(sutx_data$daysabst2_new_baseline, sutx_data$daysabst2_new_baseline)
+                                  
+#LINEAR MODEL
+  linearmodel_marijuanause <- lm(pclchangescoreforaudit ~ daysabst2_new_baseline + sex + age + ethnicity + cohort_type_baseline + first_race + phq9_score_day1, data=sutx_data)
+summary(linearmodel_marijuanause)
+
+#####DEPRESSION
+##CHANGE SCORE FOR PHQ
+ attach(sutx_data)
+  phqchangescoreforaudit <- phq9_score_day1 - phq9_score_post
+  
+###LINEAR MODELS FOR ALC AND MARI
+  linearmodel_alcoholusephq <- lm(phqchangescoreforaudit ~ auditc1_new_baseline + sex + age + ethnicity + cohort_type_baseline + first_race + pcl5_score_day1, data=sutx_data)
+summary(linearmodel_alcoholusephq)
+
+  linearmodel_marijuanausephq <- lm(phqchangescoreforaudit ~ daysabst2_new_baseline + sex + age + ethnicity + cohort_type_baseline + first_race + pcl5_score_day1, data=sutx_data)
+summary(linearmodel_marijuanausephq)
+
+#####MAINTENANCE OF GAINS PCL ONE MONTH
+sutx_data <- sutx_data %>% drop_na(pcl5_score_pastmonth_1mon)
+
+sutx_data <- sutx_data %>% 
+  mutate(changeScorePCL=pcl5_score_post - pcl5_score_pastmonth_1mon, binaryworse10= (changeScorePCL) < -10) %>%
+  group_by(binaryworse10)
+        
+#62 people did NOT maintain gains (had clinically significant symptom worsening >=10 PCL points)
+anova_pcl_alcuse1mon <- aov(binaryworse10 ~ auditc1_new_baseline + sex + age + ethnicity + cohort_type_baseline + first_race + phq9_score_1mon)
+summary(anova_pcl_alcuse1mon)
+
+anova_pcl_mariuse1mon <- aov(binaryworse10 ~ daysabst2_new_baseline + sex + age + ethnicity + cohort_type_baseline + first_race + phq9_score_1mon)
+summary(anova_pcl_mariuse1mon)
+
+######MAINTENANCE OF PHQ GAINS ONE MONTH
+sutx_data <- sutx_data %>% drop_na(phq9_score_1mon)
+
+sutx_data <- sutx_data %>% 
+  mutate(changeScorePHQ=phq9_score_post - phq9_score_1mon, phq9_maintain_1month= (changeScorePHQ) < -3) %>%
+  group_by(phq9_maintain_1month)
+
+anova_phq_alcuse1mon <- aov(phq9_maintain_1month ~ auditc1_new_baseline + sex + age + ethnicity + cohort_type_baseline + first_race + pcl5_score_pastmonth_1mon)
+summary(anova_phq_alcuse1mon)
+
+anova_phq_mariuse1mon <- aov(phq9_maintain_1month ~ daysabst2_new_baseline + sex + age + ethnicity + cohort_type_baseline + first_race + pcl5_score_pastmonth_1mon)
+summary(anova_phq_mariuse1mon)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+  
